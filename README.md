@@ -2,7 +2,37 @@
 
 API desenvolvida para o desafio **Rinha de Backend 2026**, com foco em **detecção de fraude em transações de cartão usando busca vetorial**.
 
-A solução implementa um módulo de autorização antifraude que recebe uma transação, transforma o payload em um vetor de 14 dimensões, busca transações similares em um dataset de referência e retorna uma decisão de aprovação ou negação com base no score de fraude.
+A solução implementa um módulo antifraude que recebe uma transação de cartão, transforma o payload em um vetor de 14 dimensões, busca transações similares em um dataset de referência e retorna uma decisão de aprovação ou negação com base no score de fraude.
+
+---
+
+## Status da submissão
+
+Repositório submetido no desafio:
+
+```txt
+https://github.com/IcaroWil/Rinha-do-Backend
+```
+
+Imagem pública Docker:
+
+```txt
+wilcaro572/rinha-fraud-rust:latest
+```
+
+Branches:
+
+```txt
+main        -> código-fonte completo
+submission  -> arquivos mínimos para execução oficial
+```
+
+A branch `submission` contém apenas:
+
+```txt
+docker-compose.yml
+nginx.conf
+```
 
 ---
 
@@ -17,7 +47,7 @@ Para cada transação recebida em `POST /fraud-score`, a aplicação executa o s
 5. Calcula o score de fraude com base nos rótulos encontrados.
 6. Retorna a decisão final.
 
-A regra de decisão é:
+Regra de decisão:
 
 ```txt
 fraud_score = quantidade_de_fraudes_entre_os_5_vizinhos / 5
@@ -28,21 +58,22 @@ approved = fraud_score < 0.6
 
 ## Stack
 
-A stack foi escolhida com foco em baixa latência, baixo consumo de memória e previsibilidade de performance.
+A stack foi escolhida com foco em baixa latência, previsibilidade de performance e baixo consumo de memória.
 
 - **Rust** — linguagem principal da API.
-- **Axum** — framework HTTP minimalista e performático.
+- **Axum** — framework HTTP.
 - **Tokio** — runtime assíncrono.
 - **Serde** — serialização e desserialização JSON.
-- **Nginx** — load balancer com round-robin.
-- **Docker Compose** — orquestração local conforme exigência do desafio.
-- **Índice binário próprio** — pré-processamento do dataset para reduzir custo de startup e parsing.
+- **Nginx** — load balancer round-robin.
+- **Docker Compose** — orquestração local e submissão.
+- **Índice binário próprio** — pré-processamento do dataset para reduzir parsing em runtime.
+- **Busca vetorial bucketizada** — otimização para reduzir candidatos por request.
 
 ---
 
 ## Arquitetura
 
-A solução segue a arquitetura mínima exigida pelo desafio:
+A solução segue a arquitetura exigida pelo desafio:
 
 ```txt
 Client
@@ -55,8 +86,9 @@ Nginx Load Balancer :9999
   +--> API 2 :8080
 ```
 
-O load balancer apenas distribui as requisições entre as instâncias da API.  
-Toda a lógica de detecção de fraude fica exclusivamente dentro das APIs.
+O load balancer apenas distribui requisições entre as instâncias da API.
+
+Toda a lógica de detecção de fraude fica dentro das APIs Rust.
 
 ---
 
@@ -65,17 +97,23 @@ Toda a lógica de detecção de fraude fica exclusivamente dentro das APIs.
 ```txt
 .
 ├── src/
-│   ├── main.rs              # Inicialização da aplicação
-│   ├── api.rs               # Rotas HTTP e handlers
-│   ├── models.rs            # Contratos de request/response
-│   ├── vectorizer.rs        # Conversão do payload em vetor de 14 dimensões
-│   ├── search.rs            # Algoritmo de busca vetorial
-│   ├── dataset.rs           # Carregamento do índice binário
-│   ├── config.rs            # Carregamento de normalização e risco MCC
+│   ├── main.rs                 # Inicialização da aplicação
+│   ├── lib.rs                  # Exposição dos módulos para binários auxiliares
+│   ├── api.rs                  # Rotas HTTP e handlers
+│   ├── models.rs               # Contratos de request/response
+│   ├── vectorizer.rs           # Conversão do payload em vetor de 14 dimensões
+│   ├── search.rs               # Busca vetorial otimizada
+│   ├── dataset.rs              # Carregamento do índice binário e buckets
+│   ├── config.rs               # Normalização e risco MCC
 │   └── bin/
-│       └── build_index.rs   # Gerador do índice binário
+│       ├── build_index.rs      # Gerador do índice binário
+│       ├── compare_search.rs   # Comparador bucket vs full scan
+│       ├── bench_search.rs     # Benchmark interno da busca
+│       └── bench_by_payload.rs # Benchmark por payload
 ├── data/
 │   └── .gitkeep
+├── scripts/
+│   └── load_test_varied.sh
 ├── Dockerfile
 ├── docker-compose.yml
 ├── nginx.conf
@@ -92,7 +130,7 @@ Toda a lógica de detecção de fraude fica exclusivamente dentro das APIs.
 
 ### `GET /ready`
 
-Endpoint de healthcheck/readiness.
+Endpoint de readiness.
 
 #### Response
 
@@ -104,7 +142,7 @@ HTTP/1.1 200 OK
 
 ### `POST /fraud-score`
 
-Recebe os dados de uma transação e retorna a decisão antifraude.
+Recebe os dados da transação e retorna a decisão antifraude.
 
 #### Request example
 
@@ -170,69 +208,105 @@ Cada transação é convertida em um vetor de 14 dimensões:
 13 merchant_avg_amount
 ```
 
-As dimensões são normalizadas para permitir comparação por distância vetorial.
+As dimensões são normalizadas conforme as regras oficiais do desafio.
 
-Quando `last_transaction` é `null`, as dimensões relacionadas à última transação recebem o valor especial `-1`.
+Quando `last_transaction` é `null`, as dimensões relacionadas à última transação recebem tratamento especial conforme a regra de normalização.
 
 ---
 
 ## Estratégia de busca vetorial
 
-A primeira versão da solução utiliza busca exata por distância euclidiana sobre o índice binário carregado em memória.
+A solução começou com uma busca exata por distância euclidiana sobre os 3 milhões de vetores.
 
-Para cada transação:
+Depois, foi otimizada para uma busca bucketizada:
 
-1. O payload é convertido para vetor.
-2. O vetor é quantizado.
-3. A aplicação percorre os vetores de referência.
-4. Mantém apenas os 5 vizinhos mais próximos.
-5. Calcula o score final com base nos labels dos vizinhos.
+1. O payload é convertido para vetor normalizado.
+2. O vetor é quantizado para `u16`.
+3. A consulta identifica buckets candidatos com base em dimensões relevantes.
+4. A distância é calculada apenas nos candidatos do bucket.
+5. Os 5 vizinhos mais próximos são mantidos.
+6. O `fraud_score` é calculado com base nos labels dos 5 vizinhos.
 
-A distância é calculada sem raiz quadrada, pois para comparação de vizinhos a soma dos quadrados é suficiente.
+A distância usa soma dos quadrados, sem raiz quadrada:
 
 ```txt
 distance = Σ(query[i] - reference[i])²
 ```
 
+A raiz quadrada não é necessária porque a ordenação das distâncias não muda.
+
+---
+
+## Otimizações aplicadas
+
+### Índice binário
+
+O dataset oficial vem como JSON gzipado.
+
+Para evitar parsing custoso em runtime, o projeto gera um índice binário:
+
+```txt
+references.json.gz
+        |
+        v
+build_index
+        |
+        v
+index.bin
+```
+
+O índice armazena:
+
+```txt
+magic header
+quantidade de vetores
+quantidade de dimensões
+vetores quantizados em u16
+labels em u8
+```
+
+### Bucket search
+
+A busca foi otimizada usando buckets calculados a partir de dimensões fortes do vetor.
+
+A estratégia final usa:
+
+```txt
+AMOUNT_BUCKETS = 16
+MCC_BUCKETS = 8
+```
+
+Busca principal:
+
+```txt
+amount exato
+mcc ±1
+```
+
+Para scores de borda:
+
+```txt
+score 0.4 ou 0.6
+```
+
+a solução faz uma expansão local:
+
+```txt
+amount ±1
+mcc ±1
+```
+
+Isso evita fallback para full scan na maioria dos casos de fronteira, mantendo boa compatibilidade com a busca exata nos payloads de exemplo.
+
+### Distância desenrolada
+
+Como o vetor sempre possui 14 dimensões, o cálculo da distância foi desenrolado manualmente para reduzir overhead no caminho quente.
+
 ---
 
 ## Pré-processamento do dataset
 
-O dataset oficial é fornecido como JSON gzipado.
-
-Para evitar parsing de JSON grande durante o startup da API, o projeto possui um binário auxiliar responsável por gerar um índice binário otimizado.
-
-Fluxo:
-
-```txt
-data/references.json.gz
-        |
-        v
-cargo run --release --bin build_index
-        |
-        v
-data/index.bin
-```
-
-O arquivo `index.bin` contém:
-
-```txt
-Header
-Quantidade de vetores
-Quantidade de dimensões
-Vetores quantizados em u16
-Labels em u8
-```
-
-Essa abordagem reduz o custo de leitura em runtime e permite que a API carregue diretamente uma representação compacta do dataset.
-
----
-
-## Dados necessários
-
-Os arquivos oficiais do desafio devem estar dentro da pasta `data/`.
-
-Baixe os arquivos com:
+Baixe os arquivos oficiais:
 
 ```bash
 mkdir -p data
@@ -258,19 +332,13 @@ curl -L \
   -o data/references.json.gz
 ```
 
-Valide o arquivo compactado:
+Valide o arquivo:
 
 ```bash
 gzip -t data/references.json.gz
 ```
 
-Se o comando não retornar erro, o arquivo está válido.
-
----
-
-## Gerar índice binário
-
-Após baixar os arquivos, gere o índice:
+Gere o índice:
 
 ```bash
 cargo run --release --bin build_index
@@ -289,25 +357,15 @@ Index size: 82.97 MB
 
 ## Rodar localmente
 
-Execute a API em modo release:
-
 ```bash
 cargo run --release --bin rinha-fraud-rust
 ```
 
-A aplicação deve iniciar em:
-
-```txt
-0.0.0.0:8080
-```
-
-Teste o readiness:
+Teste:
 
 ```bash
 curl -i http://localhost:8080/ready
 ```
-
-Teste o endpoint principal:
 
 ```bash
 jq '.[0]' data/example-payloads.json > /tmp/payload.json
@@ -321,13 +379,13 @@ curl -s -X POST http://localhost:8080/fraud-score \
 
 ## Rodar com Docker
 
-Build da imagem:
+Build local:
 
 ```bash
 docker build -t rinha-fraud-rust:latest .
 ```
 
-Executar apenas uma instância:
+Rodar uma instância:
 
 ```bash
 docker run --rm -p 8080:8080 rinha-fraud-rust:latest
@@ -343,7 +401,7 @@ curl -i http://localhost:8080/ready
 
 ## Rodar com Docker Compose
 
-A execução via Docker Compose sobe:
+A execução com Docker Compose sobe:
 
 - 1 Nginx na porta `9999`
 - 2 instâncias da API Rust
@@ -352,13 +410,11 @@ A execução via Docker Compose sobe:
 docker compose up
 ```
 
-Teste pela porta oficial:
+Teste:
 
 ```bash
 curl -i http://localhost:9999/ready
 ```
-
-Teste o endpoint principal:
 
 ```bash
 curl -s -X POST http://localhost:9999/fraud-score \
@@ -368,9 +424,25 @@ curl -s -X POST http://localhost:9999/fraud-score \
 
 ---
 
+## Docker Hub
+
+Imagem pública usada na branch `submission`:
+
+```txt
+wilcaro572/rinha-fraud-rust:latest
+```
+
+Pull manual:
+
+```bash
+docker pull wilcaro572/rinha-fraud-rust:latest
+```
+
+---
+
 ## Limites de recursos
 
-O `docker-compose.yml` define limites compatíveis com o desafio:
+O `docker-compose.yml` respeita o limite total do desafio:
 
 ```txt
 nginx:
@@ -393,22 +465,78 @@ CPU: 1.0
 Memory: 350MB
 ```
 
----
+Durante os testes locais, o consumo ficou aproximadamente:
 
-## Benchmark simples
-
-Para medir o tempo de uma requisição:
-
-```bash
-time curl -s -X POST http://localhost:9999/fraud-score \
-  -H "Content-Type: application/json" \
-  --data @/tmp/payload.json
+```txt
+nginx: ~3 MB
+api1:  ~96 MB
+api2:  ~96 MB
 ```
 
-Para acompanhar consumo de memória e CPU:
+---
+
+## Benchmarks
+
+### Comparar busca bucketizada contra busca exata
 
 ```bash
-docker stats
+cargo run --release --bin compare_search
+```
+
+Resultado validado nos payloads de exemplo:
+
+```txt
+Same score: 50/50
+Same decision: 50/50
+```
+
+### Benchmark interno da busca
+
+```bash
+cargo run --release --bin bench_search
+```
+
+Resultado observado após otimizações:
+
+```txt
+avg: ~7.3ms
+p99: ~16.9ms
+```
+
+### Benchmark por payload
+
+```bash
+cargo run --release --bin bench_by_payload
+```
+
+Esse comando mostra quais payloads caem em buckets mais caros e quantos candidatos são avaliados.
+
+### Teste de carga com payloads variados
+
+```bash
+./scripts/load_test_varied.sh http://localhost:9999/fraud-score 500 4
+```
+
+Resultado observado:
+
+```txt
+Average: ~30ms
+p99: ~92ms
+Status codes:
+200 500
+```
+
+```bash
+./scripts/load_test_varied.sh http://localhost:9999/fraud-score 1000 10
+```
+
+Resultado observado:
+
+```txt
+Average: ~95ms
+p99: ~269ms
+Status codes:
+200 1000
 ```
 
 ---
@@ -419,6 +547,7 @@ Este repositório versiona:
 
 ```txt
 src/
+scripts/
 Cargo.toml
 Cargo.lock
 Dockerfile
@@ -428,13 +557,15 @@ README.md
 .gitignore
 .dockerignore
 data/.gitkeep
+data/example-payloads.json
+data/example-references.json
+data/mcc_risk.json
+data/normalization.json
 ```
 
 ---
 
 ## Arquivos não versionados
-
-Por serem arquivos grandes, gerados ou específicos do ambiente local, estes arquivos não são versionados:
 
 ```txt
 target/
@@ -445,13 +576,11 @@ data/*.bin
 *.log
 ```
 
-O índice binário deve ser gerado localmente antes do build da imagem Docker.
-
 ---
 
 ## Comandos úteis
 
-### Build em release
+### Build release
 
 ```bash
 cargo build --release
@@ -467,6 +596,24 @@ cargo run --release --bin rinha-fraud-rust
 
 ```bash
 cargo run --release --bin build_index
+```
+
+### Comparar busca bucketizada e full scan
+
+```bash
+cargo run --release --bin compare_search
+```
+
+### Benchmark interno
+
+```bash
+cargo run --release --bin bench_search
+```
+
+### Benchmark por payload
+
+```bash
+cargo run --release --bin bench_by_payload
 ```
 
 ### Build Docker
@@ -487,13 +634,7 @@ docker compose up
 docker compose down
 ```
 
-### Ver containers ativos
-
-```bash
-docker ps
-```
-
-### Ver consumo de recursos
+### Ver consumo
 
 ```bash
 docker stats
@@ -511,12 +652,17 @@ docker stats
 - [x] Geração de índice binário.
 - [x] Carregamento do índice em memória.
 - [x] Busca vetorial exata inicial.
+- [x] Otimização com bucket search.
+- [x] Expansão local para scores de borda.
+- [x] Cálculo de distância otimizado.
 - [x] Dockerfile.
 - [x] Docker Compose com Nginx e 2 APIs.
-- [ ] Otimização de busca vetorial.
-- [ ] Redução de latência p99.
-- [ ] Validação de consumo dentro dos limites finais.
-- [ ] Preparação da branch `submission`.
+- [x] Imagem pública no Docker Hub.
+- [x] Validação de consumo dentro dos limites finais.
+- [x] Benchmarks internos.
+- [x] Teste de carga com payloads variados.
+- [x] Preparação da branch `submission`.
+- [x] PR de participação no repositório oficial.
 
 ---
 
@@ -535,24 +681,43 @@ Rust foi escolhido por oferecer:
 
 ### Por que índice binário?
 
-O dataset oficial é grande e não deve ser parseado como JSON em cada startup de forma custosa.
+O dataset oficial é grande e não deve ser parseado como JSON no startup da API.
 
 O índice binário permite:
 
-- Menor uso de espaço.
-- Startup mais rápido.
-- Leitura sequencial eficiente.
-- Representação compacta dos vetores.
-- Melhor controle sobre layout de memória.
+- Carregamento mais previsível.
+- Representação compacta.
+- Vetores quantizados em `u16`.
+- Menor overhead de parsing.
+- Melhor controle do layout de memória.
+
+### Por que bucket search?
+
+A busca exata nos 3 milhões de vetores é correta, mas custosa.
+
+A bucketização reduz a quantidade de candidatos avaliados por request e melhora a latência, mantendo o mesmo resultado da busca exata nos payloads de exemplo.
 
 ### Por que Nginx?
 
-O Nginx é utilizado apenas como load balancer, respeitando a regra do desafio de que o balanceador não pode aplicar lógica de detecção.
+O Nginx é utilizado apenas como load balancer round-robin, respeitando a regra do desafio de que o balanceador não pode aplicar lógica de detecção.
+
+Também foi testado HAProxy, mas o Nginx apresentou melhor estabilidade e menor consumo para esta solução.
 
 ---
 
 ## Status atual
 
-A solução já possui uma implementação funcional com busca vetorial exata sobre o dataset real pré-processado.
+A solução está funcional, otimizada e submetida ao repositório oficial da Rinha de Backend 2026.
 
-Próximos esforços serão concentrados em otimização de latência e redução de custo de busca por request.
+O repositório possui:
+
+```txt
+main        -> código completo
+submission  -> arquivos mínimos para execução oficial
+```
+
+A imagem pública está disponível em:
+
+```txt
+wilcaro572/rinha-fraud-rust:latest
+```
