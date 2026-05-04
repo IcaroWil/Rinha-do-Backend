@@ -4,7 +4,7 @@ use rinha_fraud_rust::{
     config::AppConfig,
     dataset::Dataset,
     models::FraudScoreRequest,
-    search::{count_bucket_candidates, fraud_score_bucket, fraud_score_bucket_only, fraud_score_full},
+    search::{fraud_score_bucket, fraud_score_full},
     vectorizer::vectorize,
 };
 
@@ -33,33 +33,9 @@ fn main() -> anyhow::Result<()> {
     println!("Dataset references: {}", dataset.len);
 
     // Warmup
-    let mut fallback_candidates = 0;
-
     for vector in &vectors {
-        let bucket_only = fraud_score_bucket_only(vector, &dataset);
-
-        if bucket_only == 0.4 || bucket_only == 0.6 {
-            fallback_candidates += 1;
-        }
+        let _ = fraud_score_bucket(vector, &dataset);
     }
-
-    println!("Fallback candidates in example payloads: {}/{}", fallback_candidates, vectors.len());
-
-    let mut candidate_counts = vectors
-        .iter()
-        .map(|vector| count_bucket_candidates(vector, &dataset))
-        .collect::<Vec<_>>();
-
-    candidate_counts.sort_unstable();
-
-    let total_candidates: usize = candidate_counts.iter().sum();
-    let avg_candidates = total_candidates as f64 / candidate_counts.len() as f64;
-
-    println!("--- Candidate count ---");
-    println!("min candidates: {}", candidate_counts[0]);
-    println!("avg candidates: {:.2}", avg_candidates);
-    println!("p50 candidates: {}", candidate_counts[candidate_counts.len() / 2]);
-    println!("max candidates: {}", candidate_counts[candidate_counts.len() - 1]);
 
     let iterations = 1_000;
     let mut durations = Vec::with_capacity(iterations);

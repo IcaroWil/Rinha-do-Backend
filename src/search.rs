@@ -48,16 +48,28 @@ fn quantize_query(query: &Vector) -> [u16; DIMS] {
     result
 }
 
-#[inline]
+#[inline(always)]
+fn sq_diff(a: u16, b: u16) -> u64 {
+    let diff = a as i64 - b as i64;
+    (diff * diff) as u64
+}
+
+#[inline(always)]
 fn distance_squared_quantized(query: &[u16; DIMS], vectors: &[u16], offset: usize) -> u64 {
-    let mut sum = 0_u64;
-
-    for i in 0..DIMS {
-        let diff = query[i] as i64 - vectors[offset + i] as i64;
-        sum += (diff * diff) as u64;
-    }
-
-    sum
+    sq_diff(query[0], vectors[offset])
+        + sq_diff(query[1], vectors[offset + 1])
+        + sq_diff(query[2], vectors[offset + 2])
+        + sq_diff(query[3], vectors[offset + 3])
+        + sq_diff(query[4], vectors[offset + 4])
+        + sq_diff(query[5], vectors[offset + 5])
+        + sq_diff(query[6], vectors[offset + 6])
+        + sq_diff(query[7], vectors[offset + 7])
+        + sq_diff(query[8], vectors[offset + 8])
+        + sq_diff(query[9], vectors[offset + 9])
+        + sq_diff(query[10], vectors[offset + 10])
+        + sq_diff(query[11], vectors[offset + 11])
+        + sq_diff(query[12], vectors[offset + 12])
+        + sq_diff(query[13], vectors[offset + 13])
 }
 
 #[inline]
