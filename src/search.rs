@@ -103,9 +103,12 @@ fn update_top5(top: &mut [(u64, u8); 5], filled: &mut usize, dist: u64, label: u
     }
 }
 
-pub fn fraud_score_bucket(query: &Vector, dataset: &Dataset) -> f32 {
-    let query_q = quantize_query(query);
-
+fn fraud_score_bucket_range(
+    query_q: &[u16; DIMS],
+    dataset: &Dataset,
+    amount_radius: usize,
+    mcc_radius: usize,
+) -> Option<f32> {
     let amount_bucket = normalized_bucket(query_q[0], AMOUNT_BUCKETS);
     let has_last = if query_q[5] == 0 { 0 } else { 1 };
     let is_online = bool_bucket(query_q[9]);
@@ -113,11 +116,11 @@ pub fn fraud_score_bucket(query: &Vector, dataset: &Dataset) -> f32 {
     let unknown_merchant = bool_bucket(query_q[11]);
     let mcc_bucket = normalized_bucket(query_q[12], MCC_BUCKETS);
 
-    let amount_start = amount_bucket;
-    let amount_end = amount_bucket;
+    let amount_start = amount_bucket.saturating_sub(amount_radius);
+    let amount_end = (amount_bucket + amount_radius).min(AMOUNT_BUCKETS - 1);
 
-    let mcc_start = mcc_bucket.saturating_sub(1);
-    let mcc_end = (mcc_bucket + 1).min(MCC_BUCKETS - 1);
+    let mcc_start = mcc_bucket.saturating_sub(mcc_radius);
+    let mcc_end = (mcc_bucket + mcc_radius).min(MCC_BUCKETS - 1);
 
     let mut top: [(u64, u8); 5] = [(u64::MAX, 0); 5];
     let mut filled = 0_usize;
@@ -140,7 +143,7 @@ pub fn fraud_score_bucket(query: &Vector, dataset: &Dataset) -> f32 {
                 let idx = idx_u32 as usize;
                 let offset = idx * DIMS;
 
-                let dist = distance_squared_quantized(&query_q, &dataset.vectors, offset);
+                let dist = distance_squared_quantized(query_q, &dataset.vectors, offset);
                 let label = dataset.labels[idx];
 
                 update_top5(&mut top, &mut filled, dist, label);
@@ -149,19 +152,28 @@ pub fn fraud_score_bucket(query: &Vector, dataset: &Dataset) -> f32 {
         }
     }
 
-    // Segurança: se por algum motivo o bucket vier pequeno demais,
-    // fazemos fallback para busca completa para manter a qualidade.
     if checked < 5 {
-        return fraud_score_full_scan_quantized(&query_q, dataset);
+        return None;
     }
 
     let frauds = top.iter().filter(|(_, label)| *label == 1).count();
-    let score = frauds as f32 / 5.0;
 
-    // A decisão só muda na fronteira 0.4 ↔ 0.6.
-    // Para esses casos, confirmamos com busca exata.
+    Some(frauds as f32 / 5.0)
+}
+
+pub fn fraud_score_bucket(query: &Vector, dataset: &Dataset) -> f32 {
+    let query_q = quantize_query(query);
+
+    let score = match fraud_score_bucket_range(&query_q, dataset, 0, 1) {
+        Some(score) => score,
+        None => return fraud_score_full_scan_quantized(&query_q, dataset),
+    };
+
     if score == 0.4 || score == 0.6 {
-        return fraud_score_full_scan_quantized(&query_q, dataset);
+        return match fraud_score_bucket_range(&query_q, dataset, 1, 1) {
+            Some(expanded_score) => expanded_score,
+            None => fraud_score_full_scan_quantized(&query_q, dataset),
+        };
     }
 
     score
@@ -188,4 +200,40 @@ fn fraud_score_full_scan_quantized(query_q: &[u16; DIMS], dataset: &Dataset) -> 
 pub fn fraud_score_full(query: &Vector, dataset: &Dataset) -> f32 {
     let query_q = quantize_query(query);
     fraud_score_full_scan_quantized(&query_q, dataset)
+}
+
+pub fn count_bucket_candidates(query: &Vector, dataset: &Dataset) -> usize {
+    let query_q = quantize_query(query);
+
+    let amount_bucket = normalized_bucket(query_q[0], AMOUNT_BUCKETS);
+    let has_last = if query_q[5] == 0 { 0 } else { 1 };
+    let is_online = bool_bucket(query_q[9]);
+    let card_present = bool_bucket(query_q[10]);
+    let unknown_merchant = bool_bucket(query_q[11]);
+    let mcc_bucket = normalized_bucket(query_q[12], MCC_BUCKETS);
+
+    let amount_start = amount_bucket;
+    let amount_end = amount_bucket;
+
+    let mcc_start = mcc_bucket.saturating_sub(1);
+    let mcc_end = (mcc_bucket + 1).min(MCC_BUCKETS - 1);
+
+    let mut total = 0_usize;
+
+    for amount in amount_start..=amount_end {
+        for mcc in mcc_start..=mcc_end {
+            let key = bucket_key_from_parts(
+                has_last,
+                is_online,
+                card_present,
+                unknown_merchant,
+                mcc,
+                amount,
+            );
+
+            total += dataset.buckets[key].len();
+        }
+    }
+
+    total
 }
