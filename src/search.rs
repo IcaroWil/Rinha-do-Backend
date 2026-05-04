@@ -113,8 +113,8 @@ pub fn fraud_score_bucket(query: &Vector, dataset: &Dataset) -> f32 {
     let unknown_merchant = bool_bucket(query_q[11]);
     let mcc_bucket = normalized_bucket(query_q[12], MCC_BUCKETS);
 
-    let amount_start = amount_bucket.saturating_sub(2);
-    let amount_end = (amount_bucket + 2).min(AMOUNT_BUCKETS - 1);
+    let amount_start = amount_bucket;
+    let amount_end = amount_bucket;
 
     let mcc_start = mcc_bucket.saturating_sub(1);
     let mcc_end = (mcc_bucket + 1).min(MCC_BUCKETS - 1);

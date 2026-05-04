@@ -7,8 +7,8 @@ use crate::vectorizer::DIMS;
 
 const MAGIC: &[u8; 8] = b"RINHAI01";
 
-pub const AMOUNT_BUCKETS: usize = 8;
-pub const MCC_BUCKETS: usize = 4;
+pub const AMOUNT_BUCKETS: usize = 16;
+pub const MCC_BUCKETS: usize = 8;
 pub const TOTAL_BUCKETS: usize = 2 * 2 * 2 * 2 * MCC_BUCKETS * AMOUNT_BUCKETS;
 
 #[derive(Clone)]
