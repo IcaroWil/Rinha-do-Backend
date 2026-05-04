@@ -13,12 +13,12 @@ fn quantize(value: f32) -> u16 {
 }
 
 #[inline]
-fn distance_squared_quantized(query: &[u16; DIMS], vector: &[u16]) -> u32 {
-    let mut sum = 0_u32;
+fn distance_squared_quantized(query: &[u16; DIMS], vector: &[u16]) -> u64 {
+    let mut sum = 0_u64;
 
     for i in 0..DIMS {
-        let diff = query[i] as i32 - vector[i] as i32;
-        sum += (diff * diff) as u32;
+        let diff = query[i] as i64 - vector[i] as i64;
+        sum += (diff * diff) as u64;
     }
 
     sum
@@ -38,7 +38,7 @@ fn quantize_query(query: &Vector) -> [u16; DIMS] {
 pub fn fraud_score_bruteforce(query: &Vector, dataset: &Dataset) -> f32 {
     let query_q = quantize_query(query);
 
-    let mut top: [(u32, u8); 5] = [(u32::MAX, 0); 5];
+    let mut top: [(u64, u8); 5] = [(u64::MAX, 0); 5];
 
     for idx in 0..dataset.len {
         let offset = idx * DIMS;
@@ -64,4 +64,4 @@ pub fn fraud_score_bruteforce(query: &Vector, dataset: &Dataset) -> f32 {
     let frauds = top.iter().filter(|(_, label)| *label == 1).count();
 
     frauds as f32 / 5.0
-} 
+}
