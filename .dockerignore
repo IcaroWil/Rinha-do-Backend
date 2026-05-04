@@ -1,9 +1,0 @@
-target/
-.git/
-.gitignore
-README.md
-
-# Não enviar o dataset bruto para a imagem
-data/references.json.gz
-data/example-references.json
-data/example-payloads.json
