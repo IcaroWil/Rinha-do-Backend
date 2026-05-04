@@ -11,7 +11,7 @@ use crate::{
     config::AppConfig,
     dataset::Dataset,
     models::{FraudScoreRequest, FraudScoreResponse},
-    search::fraud_score_bruteforce,
+    search::fraud_score_bucket,
     vectorizer::vectorize,
 };
 
@@ -37,7 +37,7 @@ async fn fraud_score(
     Json(payload): Json<FraudScoreRequest>,
 ) -> Json<FraudScoreResponse> {
     let vector = vectorize(&payload, &state.config);
-    let fraud_score = fraud_score_bruteforce(&vector, &state.dataset);
+    let fraud_score = fraud_score_bucket(&vector, &state.dataset);
 
     Json(FraudScoreResponse {
         approved: fraud_score < 0.6,

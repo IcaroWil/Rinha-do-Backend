@@ -1,15 +1,10 @@
-mod api;
-mod config;
-mod dataset;
-mod models;
-mod search;
-mod vectorizer;
-
 use std::sync::Arc;
 
-use api::{router, AppState};
-use config::AppConfig;
-use dataset::Dataset;
+use rinha_fraud_rust::{
+    api::{router, AppState},
+    config::AppConfig,
+    dataset::Dataset,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
