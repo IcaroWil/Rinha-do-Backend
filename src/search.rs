@@ -5,6 +5,8 @@ use crate::{
     vectorizer::{Vector, DIMS},
 };
 
+const MAX_CANDIDATES_PER_QUERY: usize = 50_000;
+
 #[inline]
 fn quantize(value: f32) -> u16 {
     if value < 0.0 {
@@ -122,9 +124,8 @@ fn fraud_score_bucket_range(
     let mcc_start = mcc_bucket.saturating_sub(mcc_radius);
     let mcc_end = (mcc_bucket + mcc_radius).min(MCC_BUCKETS - 1);
 
-    let mut top: [(u64, u8); 5] = [(u64::MAX, 0); 5];
-    let mut filled = 0_usize;
-    let mut checked = 0_usize;
+    let mut bucket_keys = Vec::with_capacity(16);
+    let mut total_candidates = 0_usize;
 
     for amount in amount_start..=amount_end {
         for mcc in mcc_start..=mcc_end {
@@ -137,22 +138,57 @@ fn fraud_score_bucket_range(
                 amount,
             );
 
-            let candidates = &dataset.buckets[key];
-
-            for &idx_u32 in candidates {
-                let idx = idx_u32 as usize;
-                let offset = idx * DIMS;
-
-                let dist = distance_squared_quantized(query_q, &dataset.vectors, offset);
-                let label = dataset.labels[idx];
-
-                update_top5(&mut top, &mut filled, dist, label);
-                checked += 1;
-            }
+            total_candidates += dataset.buckets[key].len();
+            bucket_keys.push(key);
         }
     }
 
-    if checked < 5 {
+    if total_candidates < 5 {
+        return None;
+    }
+
+    let step = if total_candidates > MAX_CANDIDATES_PER_QUERY {
+        (total_candidates / MAX_CANDIDATES_PER_QUERY).max(1)
+    } else {
+        1
+    };
+
+    let mut top: [(u64, u8); 5] = [(u64::MAX, 0); 5];
+    let mut filled = 0_usize;
+    let mut checked = 0_usize;
+    let mut global_pos = 0_usize;
+
+    for key in bucket_keys {
+        let candidates = &dataset.buckets[key];
+
+        for &idx_u32 in candidates {
+            if step > 1 && global_pos % step != 0 {
+                global_pos += 1;
+                continue;
+            }
+
+            let idx = idx_u32 as usize;
+            let offset = idx * DIMS;
+
+            let dist = distance_squared_quantized(query_q, &dataset.vectors, offset);
+            let label = dataset.labels[idx];
+
+            update_top5(&mut top, &mut filled, dist, label);
+
+            checked += 1;
+            global_pos += 1;
+
+            if checked >= MAX_CANDIDATES_PER_QUERY {
+                break;
+            }
+        }
+
+        if checked >= MAX_CANDIDATES_PER_QUERY {
+            break;
+        }
+    }
+
+    if filled < 5 {
         return None;
     }
 
