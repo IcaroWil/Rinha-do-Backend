@@ -16,7 +16,7 @@ services:
           memory: "16MB"
 
   api1:
-    image: wilcaro572/rinha-fraud-rust:v2
+    image: wilcaro572/rinha-fraud-rust:v3
     container_name: rinha-api1
     deploy:
       resources:
@@ -25,7 +25,7 @@ services:
           memory: "167MB"
 
   api2:
-    image: wilcaro572/rinha-fraud-rust:v2
+    image: wilcaro572/rinha-fraud-rust:v3
     container_name: rinha-api2
     deploy:
       resources:
