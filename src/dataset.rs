@@ -10,6 +10,7 @@ const MAGIC: &[u8; 8] = b"RINHAI01";
 pub const AMOUNT_BUCKETS: usize = 16;
 pub const MCC_BUCKETS: usize = 8;
 pub const TOTAL_BUCKETS: usize = 2 * 2 * 2 * 2 * MCC_BUCKETS * AMOUNT_BUCKETS;
+pub const GLOBAL_SAMPLE_SIZE: usize = 8_192;
 
 #[derive(Clone)]
 pub struct Dataset {
@@ -17,6 +18,7 @@ pub struct Dataset {
     pub labels: Vec<u8>,
     pub len: usize,
     pub buckets: Vec<Vec<u32>>,
+    pub global_sample: Vec<u32>,
 }
 
 #[inline]
@@ -128,10 +130,20 @@ impl Dataset {
         }
 
         let non_empty_buckets = buckets.iter().filter(|bucket| !bucket.is_empty()).count();
+        let sample_stride = (len / GLOBAL_SAMPLE_SIZE).max(1);
+        let mut global_sample = Vec::with_capacity(len.min(GLOBAL_SAMPLE_SIZE));
+        let mut idx = 0_usize;
+
+        while idx < len && global_sample.len() < GLOBAL_SAMPLE_SIZE {
+            global_sample.push(idx as u32);
+            idx += sample_stride;
+        }
 
         println!(
-            "Built {} buckets, {} non-empty",
-            TOTAL_BUCKETS, non_empty_buckets
+            "Built {} buckets, {} non-empty, global sample {}",
+            TOTAL_BUCKETS,
+            non_empty_buckets,
+            global_sample.len()
         );
 
         Ok(Self {
@@ -139,6 +151,7 @@ impl Dataset {
             labels,
             len,
             buckets,
+            global_sample,
         })
     }
 }
